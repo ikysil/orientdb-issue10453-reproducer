@@ -1,0 +1,30 @@
+{
+    "enabled": true,
+    "server": {
+        "enabled": true
+    },
+    "database": {
+        "enabled": true
+    },
+    "cluster": {
+        "enabled": false
+    },
+    "reporters": {
+        "jmx": {
+            "enabled": true,
+            "domain": "orientdb-standalone"
+        },
+        "console": {
+            "enabled": false,
+            "interval": 5000
+        },
+        "csv": {
+            "enabled": true,
+            "directory": "/tmp/orientdb-server-metrics.csv",
+            "interval": 5000
+        },
+        "prometheus": {
+            "enabled": true
+        }
+    }
+}
