@@ -65,7 +65,9 @@ ENV AGENT_OPTS="--add-modules java.se \
 
 ENV HAZELCAST_OPTS="-Dhazelcast.diagnostics.enabled=true"
 
-ENV JAVA_OPTS="$JMX_OPTS $AGENT_OPTS $HAZELCAST_OPTS"
+ENV DEBUG_OPTS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:1044"
+
+ENV JAVA_OPTS="$JMX_OPTS $AGENT_OPTS $HAZELCAST_OPTS $DEBUG_OPTS"
 
 VOLUME ["/orientdb/backup", "/orientdb/databases", "/orientdb/config"]
 
@@ -84,4 +86,4 @@ EXPOSE 2480
 EXPOSE 9999
 
 # Default command start the server
-CMD ["server.sh", "debug"]
+CMD ["server.sh"]

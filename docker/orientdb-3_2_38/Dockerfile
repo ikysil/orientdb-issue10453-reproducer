@@ -18,8 +18,8 @@ ENV ORIENTDB_DOWNLOAD_SHA1=a11f37e983ea973dae7356475c69b0efdbe03f5e
 ENV ORIENTDB_DOWNLOAD_URL=${ORIENTDB_DOWNLOAD_SERVER:-https://repo1.maven.org/maven2/com/orientechnologies}/orientdb-community/$ORIENTDB_VERSION/orientdb-community-$ORIENTDB_VERSION.tar.gz
 
 #download distribution tar, untar and delete databases
-RUN mkdir /orientdb && \
-  curl -O $ORIENTDB_DOWNLOAD_URL \
+RUN mkdir /orientdb \
+  && curl -sO $ORIENTDB_DOWNLOAD_URL \
   && md5sum orientdb-community-$ORIENTDB_VERSION.tar.gz \
   && sha1sum orientdb-community-$ORIENTDB_VERSION.tar.gz \
   && echo "$ORIENTDB_DOWNLOAD_MD5 *orientdb-community-$ORIENTDB_VERSION.tar.gz" | md5sum -c - \
@@ -33,7 +33,8 @@ ENV ORIENTDB_EE_AGENT_DOWNLOAD_MD5=4c5576dee8e01531b5c4a7d2417a01d5
 ENV ORIENTDB_EE_AGENT_DOWNLOAD_SHA1=51c202b5df7599d3b7bbea0345b2f00facf91c9a
 ENV ORIENTDB_EE_AGENT_DOWNLOAD_URL=${ORIENTDB_DOWNLOAD_SERVER:-https://repo1.maven.org/maven2/com/orientechnologies}/agent/$ORIENTDB_EE_AGENT_VERSION/agent-$ORIENTDB_EE_AGENT_VERSION.jar
 
-RUN cd /orientdb/plugins && curl -O $ORIENTDB_EE_AGENT_DOWNLOAD_URL \
+RUN cd /orientdb/plugins \
+  && curl -sO $ORIENTDB_EE_AGENT_DOWNLOAD_URL \
   && md5sum agent-$ORIENTDB_EE_AGENT_VERSION.jar \
   && sha1sum agent-$ORIENTDB_EE_AGENT_VERSION.jar \
   && echo "$ORIENTDB_EE_AGENT_DOWNLOAD_MD5 *agent-$ORIENTDB_EE_AGENT_VERSION.jar" | md5sum -c - \
@@ -64,7 +65,9 @@ ENV AGENT_OPTS="--add-modules java.se \
 
 ENV HAZELCAST_OPTS="-Dhazelcast.diagnostics.enabled=true"
 
-ENV JAVA_OPTS="$JMX_OPTS $AGENT_OPTS $HAZELCAST_OPTS"
+ENV DEBUG_OPTS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:1044"
+
+ENV JAVA_OPTS="$JMX_OPTS $AGENT_OPTS $HAZELCAST_OPTS $DEBUG_OPTS"
 
 VOLUME ["/orientdb/backup", "/orientdb/databases", "/orientdb/config"]
 
@@ -83,4 +86,4 @@ EXPOSE 2480
 EXPOSE 9999
 
 # Default command start the server
-CMD ["server.sh", "debug"]
+CMD ["server.sh"]
