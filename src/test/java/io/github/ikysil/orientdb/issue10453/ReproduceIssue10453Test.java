@@ -14,22 +14,36 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 
 class ReproduceIssue10453Test {
 
     public static final int DEFAULT_CLUSTERS = 4;
-    private static final String dbName = "Issue10453";
+    private static final String DB_NAME = "Issue10453";
     private static final String ROOT = "root";
+    public static final int PROPERTIES_PER_CLASS = 31;
+    public static final int CLASSES_PER_RUN = 61;
 
     private final Logger logger = Logger.getLogger(ReproduceIssue10453Test.class.getName());
 
+    private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(4);
+    private final AtomicInteger checkSuccess = new AtomicInteger(0);
+    private final AtomicInteger checkFail = new AtomicInteger(0);
+
     @BeforeEach
     void setup() {
-        connect("remote:localhost", dbName, ROOT, ROOT);
+        checkSuccess.set(0);
+        checkFail.set(0);
+        connect("remote:localhost", DB_NAME, ROOT, ROOT);
     }
+
 
     @AfterEach
     void tearDown() {
@@ -64,7 +78,7 @@ class ReproduceIssue10453Test {
             orient = new OrientDB(serverName, userName, password, oriendDBconfig);
         } else if (serverName.startsWith("embedded:")) {
             // embedded:/<path>/directory + server can be called like that
-            orient = new OrientDB(serverName, OrientDBConfig.defaultConfig());
+            orient = new OrientDB(serverName, oriendDBconfig);
         } else {
             throw new UnsupportedOperationException(
                     "Currently only 'embedded' and 'remote' are supported.");
@@ -75,7 +89,7 @@ class ReproduceIssue10453Test {
     protected OrientGraphBaseFactory getOrientGraphBaseFactory() {
         return new OrientGraphFactory(
                 orient,
-                dbName,
+                DB_NAME,
                 null,
                 ROOT,
                 ROOT
@@ -87,18 +101,44 @@ class ReproduceIssue10453Test {
         assertThatNoException().isThrownBy(this::getOrientGraphBaseFactory);
     }
 
+    void check() {
+        try (var session = pool.acquire()) {
+            try (var result = session.query("SELECT @class FROM V LIMIT 20")) {
+                checkSuccess.incrementAndGet();
+            }
+        } catch (Exception e) {
+            var checkIndex = checkFail.getAndIncrement();
+            logger.warning("check %d failed: %s %s".formatted(checkIndex, e.getClass().getSimpleName(), e.getMessage()));
+        }
+    }
+
+    void assertChecks() throws InterruptedException {
+        executor.shutdown();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).as("tasks finished").isTrue();
+
+        assertThat(checkFail.get()).as("failed checks - not expected")
+                .isZero();
+    }
+
+    void progress(int step) {
+        if (step % 8 == 0) {
+            logger.info("Step %d, checks succeeded %d, checks failed %d"
+                    .formatted(step, checkSuccess.get(), checkFail.get()));
+        }
+    }
+
     @Test
     void defineSchemaBeforeWorkaround() {
         final var runId = System.currentTimeMillis();
-        var todoClasses = 16;
+
+        executor.scheduleAtFixedRate(this::check, 3, 3, TimeUnit.SECONDS);
+
+        var todoClasses = CLASSES_PER_RUN;
         final var schemaGraph = getOrientGraphBaseFactory().getNoTx();
         try (var db = schemaGraph.getRawDatabase()) {
             while (todoClasses > 0) {
-                todoClasses--;
+                progress(todoClasses--);
 
-                if (todoClasses % 13 == 0) {
-                    logger.info("TODO %d".formatted(todoClasses));
-                }
                 final var className = "TestClass_%d_%d".formatted(runId, todoClasses);
                 final var defineEdge = todoClasses % 31 < 7;
 
@@ -112,7 +152,7 @@ class ReproduceIssue10453Test {
                     type = schema.createClass(className, DEFAULT_CLUSTERS, superClass);
                 }
 
-                for (int propIdx = 0; propIdx < 31; propIdx++) {
+                for (int propIdx = 0; propIdx < PROPERTIES_PER_CLASS; propIdx++) {
                     final var propName = "prop_%d_%d".formatted(runId, propIdx);
                     if (type.existsProperty(propName)) {
                         continue;
@@ -124,21 +164,23 @@ class ReproduceIssue10453Test {
             }
             logger.info("DONE");
         }
+
+        assertThatNoException().isThrownBy(this::assertChecks);
     }
 
     @Test
     void defineSchemaAfterWorkaround() {
         final var runId = System.currentTimeMillis();
-        var todoClasses = 16;
+
+        executor.scheduleAtFixedRate(this::check, 3, 3, TimeUnit.SECONDS);
+
+        var todoClasses = CLASSES_PER_RUN;
         final var schemaGraph = getOrientGraphBaseFactory().getNoTx();
         try (var db = schemaGraph.getRawDatabase()) {
             var schema = schemaGraph.getRawDatabase().getMetadata().getSchema();
             while (todoClasses > 0) {
-                todoClasses--;
+                progress(todoClasses--);
 
-                if (todoClasses % 13 == 0) {
-                    logger.info("TODO %d".formatted(todoClasses));
-                }
                 final var className = "TestClass_%d_%d".formatted(runId, todoClasses);
                 final var defineEdge = todoClasses % 31 < 7;
 
@@ -148,7 +190,7 @@ class ReproduceIssue10453Test {
                     type = schema.createClass(className, DEFAULT_CLUSTERS, superClass);
                 }
 
-                for (int propIdx = 0; propIdx < 31; propIdx++) {
+                for (int propIdx = 0; propIdx < PROPERTIES_PER_CLASS; propIdx++) {
                     final var propName = "prop_%d_%d".formatted(runId, propIdx);
                     if (type.existsProperty(propName)) {
                         continue;
@@ -160,6 +202,8 @@ class ReproduceIssue10453Test {
             }
             logger.info("DONE");
         }
+
+        assertThatNoException().isThrownBy(this::assertChecks);
     }
 
 }

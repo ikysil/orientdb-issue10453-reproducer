@@ -71,7 +71,13 @@ ENV JAVA_OPTS="$JMX_OPTS $AGENT_OPTS $HAZELCAST_OPTS $DEBUG_OPTS"
 
 VOLUME ["/orientdb/backup", "/orientdb/databases", "/orientdb/config"]
 
+VOLUME ["/tmp/orientdb-server-metrics.csv"]
+
+COPY --from=scripts create-database.sh /orientdb/bin/create-database.sh
+
 WORKDIR /orientdb
+
+RUN cd /orientdb/bin && ./create-database.sh
 
 # OrientDB debug
 EXPOSE 1044
