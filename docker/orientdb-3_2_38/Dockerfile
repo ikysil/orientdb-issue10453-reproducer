@@ -77,7 +77,7 @@ COPY --from=scripts create-database.sh /orientdb/bin/create-database.sh
 
 WORKDIR /orientdb
 
-RUN cd /orientdb/bin && ./create-database.sh
+RUN cd /orientdb/bin && bash ./create-database.sh
 
 # OrientDB debug
 EXPOSE 1044
