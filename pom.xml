@@ -13,7 +13,7 @@
     <maven.compiler.target>21</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <orientdb.version>3.2.38</orientdb.version>
+    <orientdb.version>3.2.40</orientdb.version>
   </properties>
 
   <dependencies>

@@ -2,22 +2,25 @@ package io.github.ikysil.orientdb.issue10453;
 
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
-import com.orientechnologies.orient.core.db.ODatabasePool;
-import com.orientechnologies.orient.core.db.OrientDB;
-import com.orientechnologies.orient.core.db.OrientDBConfig;
-import com.orientechnologies.orient.core.db.OrientDBConfigBuilder;
+import com.orientechnologies.orient.core.db.*;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import org.apache.tinkerpop.gremlin.orientdb.OrientGraphBaseFactory;
 import org.apache.tinkerpop.gremlin.orientdb.OrientGraphFactory;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,22 +34,29 @@ class ReproduceIssue10453Test {
     public static final int PROPERTIES_PER_CLASS = 31;
     public static final int CLASSES_PER_RUN = 61;
 
+    private static final Supplier<ODatabaseSession> DISCONNECTED_SESSION_FACTORY = () -> {
+        throw new IllegalStateException("disconnected");
+    };
+
     private final Logger logger = Logger.getLogger(ReproduceIssue10453Test.class.getName());
 
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(4);
     private final AtomicInteger checkSuccess = new AtomicInteger(0);
-    private final AtomicInteger checkFail = new AtomicInteger(0);
+    private final Collection<Exception> checkFailures = Collections.synchronizedList(new ArrayList<>());
+    private final AtomicReference<Supplier<ODatabaseSession>> databaseSessionFactory = new AtomicReference<>(DISCONNECTED_SESSION_FACTORY);
 
     @BeforeEach
     void setup() {
+        Assertions.setMaxStackTraceElementsDisplayed(24);
         checkSuccess.set(0);
-        checkFail.set(0);
+        checkFailures.clear();
         connect("remote:localhost", DB_NAME, ROOT, ROOT);
     }
 
-
     @AfterEach
-    void tearDown() {
+    void tearDown() throws InterruptedException {
+        assertChecks();
+
         disconnect();
         Orient.instance().shutdown();
     }
@@ -55,6 +65,7 @@ class ReproduceIssue10453Test {
     private ODatabasePool pool;
 
     public void disconnect() {
+        databaseSessionFactory.set(DISCONNECTED_SESSION_FACTORY);
         if (pool != null) {
             pool.close();
         }
@@ -84,6 +95,8 @@ class ReproduceIssue10453Test {
                     "Currently only 'embedded' and 'remote' are supported.");
         }
         pool = orient.cachedPool(dbName, userName, password, oriendDBconfig);
+//        databaseSessionFactory.set(() -> pool.acquire());
+        databaseSessionFactory.set(() -> orient.open(dbName, userName, password, oriendDBconfig));
     }
 
     protected OrientGraphBaseFactory getOrientGraphBaseFactory() {
@@ -101,14 +114,16 @@ class ReproduceIssue10453Test {
         assertThatNoException().isThrownBy(this::getOrientGraphBaseFactory);
     }
 
-    void check() {
-        try (var session = pool.acquire()) {
+    void check(String label) {
+        try (var session = databaseSessionFactory.get().get()) {
             try (var result = session.query("SELECT @class FROM V LIMIT 20")) {
                 checkSuccess.incrementAndGet();
             }
         } catch (Exception e) {
-            var checkIndex = checkFail.getAndIncrement();
-            logger.warning("check %d failed: %s %s".formatted(checkIndex, e.getClass().getSimpleName(), e.getMessage()));
+            checkFailures.add(e);
+            logger.warning("%s: check failed: %s %s".formatted(
+                    label, e.getClass().getSimpleName(), e.getMessage())
+            );
         }
     }
 
@@ -116,14 +131,14 @@ class ReproduceIssue10453Test {
         executor.shutdown();
         assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).as("tasks finished").isTrue();
 
-        assertThat(checkFail.get()).as("failed checks - not expected")
-                .isZero();
+        assertThat(checkFailures).as("failed checks - not expected")
+                .isEmpty();
     }
 
-    void progress(int step) {
+    void progress(String label, int step) {
         if (step % 8 == 0) {
-            logger.info("Step %d, checks succeeded %d, checks failed %d"
-                    .formatted(step, checkSuccess.get(), checkFail.get()));
+            logger.info("%s: Step %d, checks succeeded %d, checks failed %d"
+                    .formatted(label, step, checkSuccess.get(), checkFailures.size()));
         }
     }
 
@@ -131,13 +146,13 @@ class ReproduceIssue10453Test {
     void defineSchemaBeforeWorkaround() {
         final var runId = System.currentTimeMillis();
 
-        executor.scheduleAtFixedRate(this::check, 3, 3, TimeUnit.SECONDS);
+        executor.scheduleAtFixedRate(() -> check("beforeWorkaround"), 3, 3, TimeUnit.SECONDS);
 
         var todoClasses = CLASSES_PER_RUN;
         final var schemaGraph = getOrientGraphBaseFactory().getNoTx();
         try (var db = schemaGraph.getRawDatabase()) {
-            while (todoClasses > 0) {
-                progress(todoClasses--);
+            while (todoClasses > 0 && checkFailures.isEmpty()) {
+                progress("beforeWorkaround", todoClasses--);
 
                 final var className = "TestClass_%d_%d".formatted(runId, todoClasses);
                 final var defineEdge = todoClasses % 31 < 7;
@@ -164,22 +179,20 @@ class ReproduceIssue10453Test {
             }
             logger.info("DONE");
         }
-
-        assertThatNoException().isThrownBy(this::assertChecks);
     }
 
     @Test
     void defineSchemaAfterWorkaround() {
         final var runId = System.currentTimeMillis();
 
-        executor.scheduleAtFixedRate(this::check, 3, 3, TimeUnit.SECONDS);
+        executor.scheduleAtFixedRate(() -> check("afterWorkaround"), 3, 3, TimeUnit.SECONDS);
 
         var todoClasses = CLASSES_PER_RUN;
         final var schemaGraph = getOrientGraphBaseFactory().getNoTx();
         try (var db = schemaGraph.getRawDatabase()) {
             var schema = schemaGraph.getRawDatabase().getMetadata().getSchema();
-            while (todoClasses > 0) {
-                progress(todoClasses--);
+            while (todoClasses > 0 && checkFailures.isEmpty()) {
+                progress("afterWorkaround", todoClasses--);
 
                 final var className = "TestClass_%d_%d".formatted(runId, todoClasses);
                 final var defineEdge = todoClasses % 31 < 7;
@@ -202,8 +215,6 @@ class ReproduceIssue10453Test {
             }
             logger.info("DONE");
         }
-
-        assertThatNoException().isThrownBy(this::assertChecks);
     }
 
 }
